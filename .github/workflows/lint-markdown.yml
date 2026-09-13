@@ -1,0 +1,29 @@
+name: Lint markdown
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prettier (format check)
+        run: npx --yes prettier@3 --check "**/*.md"
+
+      - name: markdownlint
+        run: npx --yes markdownlint-cli2 "**/*.md"
+
+      # Advisory: prints prose-style warnings in the log but never fails the build.
+      - name: Vale (prose style)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" vale
+          export PATH="$HOME/.local/bin:$PATH"
+          vale sync
+          vale --no-exit README.md posts
+        env:
+          VALE_VERSION: "3.21.0"

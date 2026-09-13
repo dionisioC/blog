@@ -1,0 +1,5 @@
+# Vale's synced style packages are third-party files
+.vale/
+# Gradle output inside each post's code project
+**/build/
+.gradle/

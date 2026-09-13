@@ -1,0 +1,8 @@
+{
+  "config": {
+    "default": true,
+    // Prettier owns line width (printWidth 100); tables legitimately exceed it.
+    "MD013": false
+  },
+  "ignores": [".vale/**", "**/build/**", "**/.gradle/**", "**/node_modules/**"]
+}
