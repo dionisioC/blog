@@ -1,0 +1,61 @@
+name: Verify article code
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # No gradle-version pin: each project runs on its committed wrapper.
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build & test every post's code
+        run: |
+          set -e
+          shopt -s nullglob
+          for dir in posts/*/code; do
+            [ -x "$dir/gradlew" ] || continue
+            echo "==== test $dir ===="
+            ( cd "$dir" && ./gradlew test --no-daemon )
+          done
+
+      # The demo has to RUN cleanly, not just compile — a Money.toString bug once crashed
+      # `gradlew run` while `test` stayed green. Skips posts without an application plugin.
+      - name: Run every post's demo
+        run: |
+          set -e
+          shopt -s nullglob
+          for dir in posts/*/code; do
+            [ -x "$dir/gradlew" ] || continue
+            grep -q application "$dir/build.gradle.kts" || continue
+            echo "==== run $dir ===="
+            ( cd "$dir" && ./gradlew run --no-daemon )
+          done
+
+      # Blocking: the first findings were fixed at the source, not baselined.
+      - name: Static analysis (detekt)
+        run: |
+          set -e
+          shopt -s nullglob
+          for dir in posts/*/code; do
+            [ -x "$dir/gradlew" ] || continue
+            echo "==== detekt $dir ===="
+            ( cd "$dir" && ./gradlew detekt --no-daemon )
+          done
+
+      - name: Upload detekt reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: detekt-reports
+          path: posts/*/code/build/reports/detekt/
+          if-no-files-found: ignore
