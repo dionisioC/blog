@@ -1,5 +1,6 @@
 package dev.dionisioc.checkout.infrastructure
 
+import dev.dionisioc.checkout.domain.ChargeRequest
 import dev.dionisioc.checkout.domain.PaymentResult
 
 /** A minimal metrics sink — enough to make "metered twice" an observable number. */
@@ -13,13 +14,18 @@ class Meter {
     fun count(name: String): Int = counts[name] ?: 0
 }
 
-/** Stores approved charge results by idempotency key so a replayed request can't charge twice. */
+/**
+ * Stores approved charges by idempotency key — the request *with* its result, so a replay can be
+ * checked against what the key was first used for, not just answered.
+ */
 class KeyStore {
-    private val seen = mutableMapOf<String, PaymentResult>()
+    private val seen = mutableMapOf<String, Stored>()
 
-    fun get(key: String): PaymentResult? = seen[key]
+    fun get(key: String): Stored? = seen[key]
 
-    fun put(key: String, result: PaymentResult) {
-        seen[key] = result
+    fun put(key: String, request: ChargeRequest, result: PaymentResult) {
+        seen[key] = Stored(request, result)
     }
+
+    data class Stored(val request: ChargeRequest, val result: PaymentResult)
 }

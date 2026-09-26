@@ -33,8 +33,8 @@ import java.time.Instant
 fun main() {
     val meter = Meter()
 
-    // Composition: cross-cutting concerns as a decorator stack. Metered outside Retrying = one
-    // logical charge per checkout, however many attempts it takes.
+    // Composition: cross-cutting concerns as a decorator stack. The ORDER is a
+    // decision, and it lives here, in wiring, not in a class hierarchy.
     val gateway: PaymentGateway =
         MeteredGateway(
             RetryingGateway(
@@ -43,7 +43,7 @@ fun main() {
             meter,
         )
 
-    // Adding a payment method is one plain line here — nothing else moves.
+    // OCP's real cost, concentrated: one plain line per payment method.
     val methods = PaymentMethodRegistry(
         "card" to { CardPayment(gateway) },
         "paypal" to { PaypalPayment(gateway) },
@@ -51,14 +51,13 @@ fun main() {
         "giftcard" to { GiftCardPayment(gateway) },   // claims no refund contract
     )
 
-    // DIP: the domain takes its details from outside. The clock is its own port, satisfied by
-    // a lambda — not java.time.Clock leaking inward.
-    val orders = InMemoryOrderRepository()   // prod: DynamoOrderRepository — same port, one line
+    // DIP: details handed to a domain that has never heard of them.
+    val orders = InMemoryOrderRepository()   // prod: DynamoOrderRepository, same port, one line
     val checkout = CheckoutService(
-        PriceCalculator(),      // SRP: Finance's class
+        PriceCalculator(),                   // SRP: Finance's class, alone
         methods,
         orders,
-        Clock { Instant.now() },
+        Clock { Instant.now() },             // the domain's own port; java.time.Clock never leaks inward
     )
 
     val cart = Cart(
