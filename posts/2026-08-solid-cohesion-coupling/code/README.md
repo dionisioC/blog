@@ -27,7 +27,7 @@ src/main/kotlin/dev/dionisioc/checkout/
 
 ## Run
 
-Toolchain: Kotlin 2.4.20, JDK 25, Gradle 9.7.1 via the committed wrapper.
+Toolchain: Kotlin 2.4.20, JDK 25, Gradle 9.8.0 via the committed wrapper.
 
 ```bash
 ./gradlew test
