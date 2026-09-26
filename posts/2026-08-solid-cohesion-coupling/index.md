@@ -1,7 +1,7 @@
 # SOLID Without the Acronym: It's Just Cohesion and Coupling
 
-SOLID isn't really five independent principles. It's mostly two long-standing software design ideas
-expressed in different ways.
+SOLID isn't really five independent principles. It's mostly two long-standing design ideas, wearing
+five names.
 
 - **High cohesion** — keep the things that change together, together.
 - **Low coupling** — depend on stable abstractions, not volatile details.
@@ -14,35 +14,32 @@ asterisk. Here's the first cut:
 | **Cohesion** | SRP, ISP      |
 | **Coupling** | OCP, LSP, DIP |
 
-A first cut is all it is. The rest of the article complicates it, and the complications are where
-the thinking is. Two are worth flagging now. ISP is the contested one: the textbook files it under
-coupling, and the ISP section explains why both readings are right. LSP is the asterisk: it belongs
-under coupling because callers couple to the _base contract_, never to your subtype, but unlike the
-other four letters it isn't a dial you can turn too far. It's a correctness constraint, which is
-what makes it a _detector_ rather than a design choice.
+It's only a first cut. ISP is contested: the textbook files it under coupling, and its section shows
+why both readings are right. LSP is the asterisk. It sits under coupling because callers couple to
+the _base contract_, never to your subtype, but it isn't a dial you can turn too far. It's a
+correctness constraint, which makes it a _detector_ rather than a design choice.
 
-Once you see that, you stop memorizing and start deriving, and you learn when _not_ to apply each
-one, because every single one of them has a cost. Applied without judgment, SOLID produces its own
-kind of unmaintainable code.
+Once you see the two forces, you stop memorizing and start deriving, including when _not_ to apply
+each letter. Every one of them has a cost, and SOLID applied without judgment produces its own kind
+of unmaintainable code.
 
-Every example lives in one system: the checkout slice of a payments product. One use case, end to
-end: `CheckoutService.checkout(cart)` prices the cart, charges a payment method through a gateway,
-records the order, and returns a result. Every principle below shows up because the domain _forces_
-it, and principles that share a codebase interact: you'll watch them repair each other.
-
-For each principle: what it means, where it shows up here, and what it costs when you over-apply it.
+Every example lives in one system, the checkout slice of a payments product:
+`CheckoutService.checkout(cart)` prices the cart, charges a payment method through a gateway,
+records the order and returns a result. The domain _forces_ each principle, and you'll watch them
+repair each other. For each one: what it means, where it shows up, and what over-applying it costs.
 
 ---
 
 ## S — Single Responsibility
 
 **Definition.** A class should have one reason to change. The version that actually helps: **one
-reason to change means one _actor_**, one group of people who can ask for that change. In our system
-the broken version is a `CheckoutManager` with both `total()` and `renderReceipt()`. It _feels_ like
+reason to change means one _actor_**, one group of people who can ask for that change.
+
+Here the broken version is a `CheckoutManager` with `total()` and `renderReceipt()`. It _feels_ like
 one thing ("checkout"), but `total()` answers to Finance, which runs a 10% loyalty discount, and
 `renderReceipt()` answers to Marketing, which runs a points program and prints the lines that earned
-points. Two programs that happen to cover the same lines today. Two actors, two reasons to change,
-one class: that's the smell.
+points. Both programs cover the same lines today, so they share one helper. Two actors, two reasons
+to change, one class: that's the smell.
 
 ```kotlin
 class CheckoutManager(private val cart: Cart) {
@@ -60,36 +57,29 @@ class CheckoutManager(private val cart: Cart) {
 }
 ```
 
-Here's how it goes wrong: Finance asks you to stop discounting gift wrap. A developer edits
-`rewardedItems()`, the obvious place, and Marketing's receipt silently drops gift wrap from its
-"points earned on" line. Nobody in Marketing asked to stop awarding points on it. The total moves
-exactly as Finance asked (every item still charged, a slightly smaller discount), so the diff looks
-correct. Nobody saw two departments in one edit. That shared private helper is coupling between
-actors, and a code review can easily miss it, because the class has one name and one obvious topic.
+Here's how it goes wrong. Finance asks you to stop discounting gift wrap. A developer edits
+`rewardedItems()`, the obvious place, and Marketing's receipt silently stops listing gift wrap under
+"points earned on," which nobody in Marketing asked for. The total moves exactly as Finance wanted
+(a smaller discount, every item still charged), so the diff looks correct. Review misses it: the
+class has one name and one obvious topic, but that private helper couples two departments.
 
-**The same shape in the wild.** You already apply SRP without naming it: the layered split. The
-controller changes when the _API shape_ changes, the service when a _business rule_ changes, the
-repository when _storage_ changes. Three reasons, three classes. In this system the same instinct
-fires once more _inside_ the service layer, and it's the split `CheckoutManager` refused to make:
-pricing math is `PriceCalculator` (Finance's), receipt copy is `ReceiptFormatter` (Marketing's),
-orchestration is `CheckoutService` (the product flow).
+**The fix is a split you already know.** In a layered app the controller changes with the _API
+shape_, the service with a _business rule_, the repository with _storage_: three reasons, three
+classes. Here the same instinct fires _inside_ the service layer: `PriceCalculator` for Finance,
+`ReceiptFormatter` for Marketing, `CheckoutService` for the flow.
 
-The part that feels wrong is what happens to `rewardedItems()`: each class gets _its own copy_ of
-"which lines count." Finance's skips gift wrap; Marketing's still includes it. DRY says merge them
-back, but they're two rules that agreed for a while, owned by two actors, and merging them is what
-caused the bug. Martin calls this _accidental duplication_: code that looks the same but changes for
-different reasons isn't really duplicated. In the repo, `SrpTest` runs the smell both ways (a
-`rewardGiftWrap` flag stands in for the edit) and shows the one edit moving the discount _and_ the
-receipt. Then it shows the split doing what `CheckoutManager` can't: no discount on gift wrap,
-points on it anyway. The moment "who asks for changes to this?" gets two different answers, you're
-looking at two classes wearing one name.
+Each class gets _its own copy_ of "which lines count": Finance's skips gift wrap, Marketing's
+doesn't. DRY says merge them, but they're two actors' rules that merely agreed for a while, and
+merging them is what caused the bug. Martin calls this _accidental duplication_: code that looks the
+same but changes for different reasons isn't really duplicated. `SrpTest` pins both behaviors: the
+smell's one edit moving discount _and_ receipt, and the split's two rules disagreeing. Whenever "who
+asks for changes to this?" gets two answers, you're looking at two classes wearing one name.
 
-**The trade-off.** SRP has two failure modes. Under-apply it and you get the god class everyone
-warns about. But over-apply it and you get something just as bad and harder to spot: **shotgun
-surgery**, where a single logical change forces edits across ten tiny files because you scattered
-things that actually change together. The dial between the two extremes is **cohesion**: _group what
-changes together._ Splitting by "this method feels different" is how you end up with the ten-file
-problem; splitting by "these change for different reasons" is SRP.
+**The trade-off.** Fowler's _Refactoring_ names both failure modes as smells. Under-apply SRP and
+you get the god class and its symptom, **divergent change**: one class edited for many unrelated
+reasons. Over-apply it and you get **shotgun surgery**: one logical change spread across ten tiny
+files, because you scattered things that change together. The dial is **cohesion**. Split by "these
+change for different reasons," never by "this method feels different."
 
 > If you remember one thing: SRP is the **cohesion** force. Too little separation and you get the
 > god class; too much and you get shotgun surgery. The question is never "how small can this class
@@ -99,10 +89,9 @@ problem; splitting by "these change for different reasons" is SRP.
 
 ## O — Open/Closed
 
-**Definition.** A class should be _open for extension, closed for modification._ In practice that
-means: you should be able to add new behavior by adding a new class, not by editing an existing,
-tested one. The enemy this principle fights is the `if/else` that grows a new branch every time a
-payment method lands:
+**Definition.** A class should be _open for extension, closed for modification_: you add behavior by
+adding a class, not by editing an existing, tested one. The enemy is the `if/else` that grows a
+branch with every new payment method:
 
 ```kotlin
 // Every new payment method = reopen this function and risk the branches already here.
@@ -118,8 +107,8 @@ fun charge(type: String, amount: Money): PaymentResult {
 }
 ```
 
-The mechanism that buys you OCP is polymorphism: depend on an abstraction, and add a new
-_implementation_ instead of a new _branch_.
+Polymorphism buys you OCP: depend on an abstraction, and add an _implementation_ instead of a
+_branch_.
 
 ```kotlin
 interface PaymentMethod {
@@ -131,50 +120,52 @@ class PaypalPayment : PaymentMethod { ... }
 class BizumPayment : PaymentMethod { ... }        // adding one = a NEW file
 ```
 
-New behavior is now a new file, _almost_. _Something_ still has to decide which `PaymentMethod` to
-instantiate, and that dispatch point does move when Bizum arrives: somewhere there's one line saying
-`"bizum" is a BizumPayment`, and you will add it. In this system that somewhere is
-`PaymentMethodRegistry`, and you'll see the line in the composition root at the end. OCP doesn't
-delete the choice; it _concentrates_ it. The choice moves out of tested business logic, where every
-edit risks the branches already there, and into one registration line in a place with no logic to
-break. _Closed for modification_ was never "zero edits anywhere"; it's "no edits where the behavior
-lives."
+New behavior is now a new file, _almost_. Something still maps `"bizum"` to `BizumPayment`, and
+you'll add that line; here it's `PaymentMethodRegistry`, wired in the composition root at the end.
+OCP doesn't delete the choice, it _concentrates_ it: out of tested business logic, into one
+registration line with no logic to break. _Closed for modification_ never meant "zero edits
+anywhere," only "no edits where the behavior lives."
 
-Notice the condition hiding in all of this: the _axis of variation_, the one direction along which
-you expected change to arrive, was _known_. OCP pays off exactly where variation is expected, which
-makes it worth looking at an axis where the opposite holds.
+That pays off because the _axis of variation_ was known: you expected new payment methods. Where the
+opposite holds, you want the opposite tool.
 
-**The inverse case: closed variation.** You've already seen this type. `PaymentResult` is what
-`checkout()` and every `PaymentMethod.charge()` returns:
+**The inverse case: closed variation.** `PaymentResult` is what `checkout()` and every
+`PaymentMethod.charge()` return:
 
 ```kotlin
 sealed interface PaymentResult
 data class Approved(val txn: TxnId, val amount: Money) : PaymentResult
 data class Declined(val reason: String)               : PaymentResult
 data object Timeout                                   : PaymentResult
+data class Conflict(val reason: String)               : PaymentResult   // paid already, other terms
 
 fun record(result: PaymentResult) = when (result) {
     is Approved -> ...
     is Declined -> ...
-    Timeout     -> ...  // add a 4th variant → this 'when' stops compiling
+    Timeout     -> ...
+    is Conflict -> ...  // add a variant → this 'when' stops compiling
 }
 ```
 
-(Java has the same pair: `sealed` types shipped in 17, JEP 409, with the exhaustive pattern `switch`
-that completes them finalized in 21, JEP 441.) This is the **deliberate inverse of OCP**. OCP wants
-adding a variant to touch nothing; sealed wants adding a variant to _break every exhaustive `when`
-at compile time_ (one with an `else` branch opts out), because for a closed set you own, like the
-states of an order or the outcomes of a payment, a silently unhandled case is the bug. Payment
-_methods_ are an open set: anyone may invent one, so OCP and the registry. Payment _results_ are a
-closed set: you decide what an outcome can be, so sealed and an exhaustive `when`. One domain, both
-answers. Choosing per axis is the judgment.
+OCP wants a new variant to touch nothing. A sealed type wants a new variant to _break every
+exhaustive `when` at compile time_, because for a closed set you own, like an order's states or a
+payment's outcomes, a silently unhandled case is the bug. Only an exhaustive `when` gets that
+protection: an `else` branch opts out, and so does an `if (result is Approved)`. That's why
+`CheckoutService`, which decides whether an outcome leaves an order behind, decides with a `when`.
+(Java has the same pair: `sealed` types in 17, JEP 409, and the exhaustive pattern `switch` in 21,
+JEP 441.)
 
-**The trade-off.** Designing for OCP up front means adding indirection on a guess. The cost is
-**premature abstraction (YAGNI)**: an interface with exactly one implementation forever, a plugin
-system for plugins that never arrive, and every reader now has to chase that interface to find the
-one place the work happens. The rule that helps: **wait for the second case.** Add the abstraction
-when the _second_ implementation shows up; that's when OCP starts paying for the indirection instead
-of just charging you for it.
+Payment _methods_ are an open set anyone may extend: OCP and a registry. Payment _results_ are a
+closed set you define: a sealed type. One domain, both answers; choosing per axis is the judgment.
+The trade even has a name, the _expression problem_ (Philip Wadler, 1998): an open interface makes a
+new variant cheap and a new operation expensive, because every implementation has to grow the
+method, and a sealed type flips both. The LSP section shows the expensive direction, when `refund`
+gets bolted onto every `PaymentMethod`.
+
+**The trade-off.** OCP up front is indirection on a guess: **premature abstraction (YAGNI)**. You
+get an interface with one implementation forever, a plugin system for plugins that never arrive, and
+readers chasing the interface to find where the work happens. **Wait for the second case**: that's
+when OCP starts paying for the indirection instead of just charging you for it.
 
 > If you remember one thing: OCP is a **coupling** principle. It decouples _what varies_ (the
 > implementations) from _what's stable_ (the code that uses them). Add a class, don't edit one. But
@@ -185,21 +176,18 @@ of just charging you for it.
 
 ## L — Liskov Substitution
 
-**Definition.** A subtype must be usable anywhere its base type is expected: through a base
+**Definition.** A subtype must be usable anywhere its base type is expected, through a base
 reference, with no surprises (Liskov & Wing's _behavioral subtyping_, 1994). The reframing that
-matters: **`extends` is not a code-sharing mechanism, it's a published claim.** "Every promise the
-parent makes, I keep." LSP is that claim taken seriously.
+matters: **`extends` isn't a code-sharing mechanism, it's a published claim**, "every promise the
+parent makes, I keep."
 
-The promises are not only the ones written into method signatures. The expensive ones are the
-properties that hold for an object's entire lifetime, like "balance is never negative" or "the
-captured amount never exceeds the authorized amount," because callers are entitled to assume them
-without ever checking. That is their whole value, and it's what makes breaking one so costly.
-
-Broken promises come in two forms, and they're worth seeing side by side because they fail in
-opposite ways.
+The expensive promises aren't in method signatures. They're properties that hold for an object's
+whole lifetime, like "balance is never negative" or "the captured amount never exceeds the
+authorized amount." Callers assume them without checking, which is their whole value and why
+breaking one costs so much. Broken promises come in two forms, and they fail in opposite ways.
 
 **Form 1 — the silent wrong answer.** Our system can issue store credit (it's where gift-card
-refunds land, as you'll see shortly):
+refunds land, as you'll see):
 
 ```kotlin
 open class StoreCredit {
@@ -224,22 +212,19 @@ class VipStoreCredit : StoreCredit() {       // "let VIPs spend past their balan
 }
 ```
 
-Every caller written against `StoreCredit` is entitled to assume `balance()` never comes back
-negative, after _any_ sequence of calls: reconciliation, the balance the app displays, the liability
-line Finance reports (unspent store credit is a liability on someone's books). None of them
-re-check, because the promise said they didn't have to. Hand them a `VipStoreCredit` and all of them
-are wrong at once, with no exception, no crash, and not one changed line of _their_ code. Nothing
-fails. Everything is quietly incorrect, which is the expensive kind of wrong.
+Callers written against `StoreCredit` assume `balance()` never goes negative, after _any_ sequence
+of calls: reconciliation, the balance the app shows, the liability line Finance reports. Hand them a
+`VipStoreCredit` and they're all wrong at once, with no exception, no crash, and not one changed
+line of _their_ code. Quietly incorrect is the expensive kind of wrong.
 
-The guards matter too. `topUp` and `redeem` both refuse negative amounts, and `Money`'s arithmetic
-throws on overflow instead of wrapping. Without them, a plain `StoreCredit` could go negative on its
-own, and this example would be blaming inheritance for a bug the parent already had. The subclass
-keeps the same guard for the same reason: breaking the balance promise should be the _only_ thing it
-does wrong.
+The guards matter too. `topUp` and `redeem` refuse negative amounts, and `Money` throws on overflow
+instead of wrapping. Without them, a plain `StoreCredit` could go negative by itself, and the
+example would blame inheritance for the parent's own bug. The subclass keeps the guard, so breaking
+the balance promise is the _only_ thing it does wrong.
 
-**Form 2 — the loud refusal.** Checkout eventually grows refunds, and in this product gift cards
-can't take them (a business rule of this example, not of payments in general). The obvious move is
-still to widen the strategy for everyone:
+**Form 2 — the loud refusal.** Checkout grows refunds, and in this product gift cards can't take
+them (a business rule of this example, not of payments in general). The obvious move widens the
+strategy for everyone:
 
 ```kotlin
 interface PaymentMethod {
@@ -260,10 +245,9 @@ method.refund(txn)                            // boom — at runtime, in prod, o
 ```
 
 The type promises something the object refuses to do, and the refusal arrives at runtime instead of
-compile time. That's the opposite failure to Form 1, and the easier one, because at least it
-announces itself. Throwing isn't the violation on its own: a contract that allows refusal is kept by
-refusing. This interface promised refunds to every caller, so the refusal breaks it. The fix is to
-stop claiming the contract:
+compile time. At least it announces itself. Throwing isn't the violation on its own: a contract that
+allows refusal is kept by refusing. This one promised refunds to every caller, so the refusal breaks
+it. The fix is to stop claiming the contract:
 
 ```kotlin
 interface PaymentMethod {
@@ -278,34 +262,40 @@ interface RefundableMethod : PaymentMethod {
 keeps every promise a charge-only view makes, never the reverse. Gift cards implement only
 `PaymentMethod`, so there's no `refund` on them to call and nothing to throw.
 
-In the repo, refunds enter through `RefundFlow`, and they enter _by order_, not by transaction: the
-order recorded which method took the money and which transaction to reverse, so nobody can pair a
-card's refund with a gift card's charge. One question is still asked at runtime, because a payment
-method arrives as a string: the registry's `refundable(name)` asks whether the resolved method has
-the capability (`as? RefundableMethod`). That isn't the `is GiftCardPayment` patch you'll see
-condemned below. It names a contract, not a class, so a new refundable method still touches nothing.
-A gift-card order comes back `NotRefundable`, and the support flow (`SupportCreditFlow`) issues
-store credit instead: the class whose promise you just watched a subclass break.
+In the repo, that fix carries real weight:
 
-And note _what_ repaired the broken contract: **segregating the interface**, which happens to be the
-next letter. The principles aren't five separate rules; they repair each other.
+- **Refunds enter by order.** The order knows which method took the money and which transaction to
+  reverse, so nobody can pair a card's refund with a gift card's charge.
+- **The capability is asked, not assumed.** Methods arrive by name, so one question stays at
+  runtime: can this one refund? `PaymentMethod.refundable()` promises only an answer, and `null`
+  keeps that promise; `RefundableMethod` answers with itself. That names a contract, not a class,
+  unlike the `is GiftCardPayment` patch below, so a new refundable method touches nothing.
+- **It survives wrappers.** An `as? RefundableMethod` stops at a `PaymentMethod by inner` wrapper,
+  quietly turning every card refund into store credit. `by` forwards the question to the card
+  inside.
+- **Gift cards settle in store credit.** A gift-card order comes back `NotRefundable`, and
+  `SupportCreditFlow` issues store credit instead: the class whose promise you just watched a
+  subclass break.
+- **Each order settles once.** The order records its settlement, so a second press of the refund
+  button answers `AlreadySettled` and moves no money.
 
-**The trade-off.** LSP itself isn't a dial: there's no such thing as "too substitutable." SRP, OCP,
-ISP and DIP can all be over-applied; LSP can only be kept or broken. Keeping it still has a price,
-though, and the price lives in the contract. You can always make every subtype substitutable by
-weakening the base contract until it promises nothing a subtype can't do. `java.util.Collection`
-does exactly that: its Javadoc marks `add` and `remove` as optional operations that may throw
-`UnsupportedOperationException`, so an unmodifiable list keeps the contract by refusing, and every
-caller pays by handling a refusal the type allows. Or you keep the contract strong and split it, as
-`RefundableMethod` did, and pay in interfaces: ISP's explosion. Weaker promises or more types.
-That's the real dial, and it belongs to the contract.
+What repaired the broken contract was **segregating the interface**, which happens to be the next
+letter. The principles aren't five separate rules; they repair each other.
+
+**The trade-off.** LSP isn't a dial: nothing is "too substitutable," and it can only be kept or
+broken. Keeping it has a price, and the price lives in the contract. You can weaken the base
+contract until every subtype can keep it, as `java.util.Collection` does: its Javadoc marks `add`
+and `remove` as optional operations that may throw `UnsupportedOperationException`, so an
+unmodifiable list keeps the contract by refusing, and every caller handles a refusal the type
+allows. Or you keep the contract strong and split it, as `RefundableMethod` did, and pay in
+interfaces: ISP's explosion. Weaker promises or more types: that's the real dial.
 
 What LSP rules out is the third option, patching the caller.
-`if (method is GiftCardPayment) skipRefund()` fixes the wrong answer by breaking OCP, and now two
-principles are broken instead of one. That's why LSP's real job in your toolbox is diagnostic: it's
-the detector for bad inheritance. When a tempting IS-A can't honor the full contract, stop
-inheriting. Narrow the contract until every implementation can keep it, or hold the object in a
-field instead of extending it.
+`if (method is GiftCardPayment) skipRefund()` fixes the wrong answer by breaking OCP, so now two
+principles are broken instead of one. That's LSP's real job in your toolbox: it detects bad
+inheritance. When a tempting IS-A can't honor the full contract, stop inheriting. Narrow the
+contract until every implementation can keep it, or hold the object in a field instead of extending
+it.
 
 > If you remember one thing: LSP is a **coupling** principle. Callers couple to the _base contract_,
 > and every subtype must be safe behind it. No surprises through a base reference. It's not a dial,
@@ -317,9 +307,9 @@ field instead of extending it.
 ## I — Interface Segregation
 
 **Definition.** No client should be forced to depend on methods it doesn't use. The key word is
-**client**: you don't segregate an interface by chopping it into pieces, you segregate it by _role_,
-one interface per _kind of caller_. The question is "who calls this, and which slice do they
-actually need?", never "how many methods is too many?"
+**client**: you segregate by _role_, one interface per _kind of caller_, not by chopping an
+interface into pieces. Ask "who calls this, and which slice do they actually need?", never "how many
+methods is too many?"
 
 ```kotlin
 // One implementation may serve every role...
@@ -338,43 +328,40 @@ class StatementsScreen(private val payments: PaymentReader) { ... }             
 class CardPayment(private val gateway: PaymentGateway) : RefundableMethod { ... }  // can't read statements
 ```
 
-The implementation didn't split; the _view_ of it did. And the benefits are concrete, not aesthetic.
-The statements screen has no charge or refund method in scope, so it can't move money by accident.
-That narrows access rather than proving it (a cast could still reach the other role of the same
-object), but in a payments system, least privilege by default is what an audit asks for. A change to
-a charging signature no longer touches any read-only client. And the test double for
-`StatementsScreen` stubs one query method instead of a whole PSP (payment service provider).
+The implementation didn't split; the _view_ of it did, and the benefits are concrete:
 
-Notice this system has now segregated twice, on two different questions: the `RefundableMethod`
-split cut by _the capability an implementation can truly promise_, this one by _the role a client
-actually plays_. They aren't rivals; they compose. `RefundFlow` decides a refund is allowed (the
-order's method has the capability), then `CardPayment` carries it out through
-`PaymentGateway.refund`: capability on the domain method, mechanism on the infra port. What no
-client gets is the raw port. `RefundHandler`, the support desk's refund button in the repo, holds
-`RefundFlow`, not `PaymentGateway`. A client that moves money goes through the use case that decides
-whether it may; hand it the port and it could refund any transaction, gift cards included, without
-asking.
+- The statements screen has no `charge` or `refund` in scope, so it can't move money by accident.
+  That narrows access rather than proving it (a cast could still reach the other role of the same
+  object), but least privilege by default is what a payments audit asks for.
+- A change to a charging signature no longer touches any read-only client.
+- The test double for `StatementsScreen` stubs one query method instead of a whole PSP (payment
+  service provider).
 
-**The symptom to look for.** An adapter full of no-ops, a class whose entire purpose is to supply
-empty implementations of methods you were forced to declare, is ISP screaming. Wherever you find
-one, the interface above it was never cut by role. The repo has a quiet version of it: the checkout
-tests' fake gateways only ever charge, yet each one stubs `refund` as a no-op. One stub per fake is
-the cheap end of the dial, and splitting `PaymentGateway` over it would be the explosion described
-next. If the fakes start stubbing three or four methods, that's your signal to cut.
+The system has now segregated twice, on two different questions: `RefundableMethod` by _what an
+implementation can truly promise_, this split by _the role a client plays_. They compose.
+`RefundFlow` decides a refund is allowed (capability, on the domain method), then `CardPayment`
+carries it out through `PaymentGateway.refund` (mechanism, on the port). No client gets the raw
+port: `RefundHandler`, the support desk's refund button, holds `RefundFlow`. Handed `PaymentGateway`
+instead, it could refund any transaction, gift cards included, without asking.
 
-**The trade-off.** Over-apply it and you get **interface explosion**: a hundred one-method
-interfaces, every call-site holding a different name for the same object, and nobody able to say
-what the thing _is_ anymore. Notice this is exactly SRP's failure pair one level up. Under-apply it
-and you get the fat interface (the god class of contracts); over-apply it and you get fragmentation
-(shotgun surgery of contracts). That's because ISP _is_ SRP applied to interfaces. Both are the
-cohesion force, and the dial is the same: segregate by the client roles that _actually exist_, not
-by method count. Two roles mean two interfaces. Five methods don't mean five interfaces.
+**The symptom to look for.** An adapter full of no-ops means the interface above it was never cut by
+role. The repo has a quiet version: the checkout tests' fake gateways only ever charge, yet each one
+stubs `refund` as a no-op. One stub per fake is the cheap end of the dial, and splitting
+`PaymentGateway` over it would be the explosion described next. When the fakes stub three or four
+methods, cut.
 
-The textbook files ISP under **coupling**, not cohesion. Robert C. Martin's own formulation, "no
-client should be forced to depend on methods it doesn't use," is a sentence about client coupling.
-Both framings are correct; they answer different questions. What segregation _buys_ is decoupling:
-clients stop depending on methods they never call. What tells you _where to cut_ is cohesion: the
-roles whose methods change together.
+**The trade-off.** Over-apply ISP and you get **interface explosion**: a hundred one-method
+interfaces, every call site holding a different name for the same object, and nobody able to say
+what the thing _is_ anymore. That's SRP's failure pair one level up: the fat interface is the god
+class of contracts, and fragmentation is their shotgun surgery. ISP _is_ SRP applied to interfaces,
+with the same dial: segregate by the client roles that _actually exist_, not by method count. Two
+roles mean two interfaces. Five methods don't mean five interfaces.
+
+The textbook files ISP under **coupling**, and Robert C. Martin's own formulation backs it: "clients
+should not be forced to depend upon interfaces that they do not use" (_The C++ Report_, 1996),
+because forcing them "results in an inadvertent coupling between all the clients." Both framings are
+right; they answer different questions. What segregation _buys_ is decoupling. What tells you _where
+to cut_ is cohesion: the roles whose methods change together.
 
 > If you remember one thing: ISP is the **cohesion** force applied to contracts. Split by caller,
 > not by method. Too few cuts and you get the fat interface; too many and you get interface
@@ -386,10 +373,9 @@ roles whose methods change together.
 
 **Definition.** The original formulation has two halves: _high-level modules should not depend on
 low-level modules — both should depend on abstractions; and abstractions should not depend on
-details — details should depend on abstractions._ The word doing the work is _inversion_, and what
-gets inverted is not "now there's an interface." It's **ownership**. The high-level policy _owns_
-the abstraction; the low-level detail _implements_ it. The test is a single question: **which module
-declares the interface?**
+details — details should depend on abstractions._ What gets inverted isn't "now there's an
+interface." It's **ownership**: the high-level policy _owns_ the abstraction, and the low-level
+detail _implements_ it. The test is a single question: **which module declares the interface?**
 
 ```kotlin
 // module: domain — the high-level policy OWNS the ports.
@@ -420,13 +406,12 @@ class StripePaymentGateway(private val client: StripeClient) : PaymentGateway, P
 class DynamoOrderRepository(private val db: DynamoDbClient) : OrderRepository { ... }
 ```
 
-Follow the compile-time arrow: `infrastructure` imports `domain`. The domain compiles alone, with no
-Stripe SDK and no AWS on its classpath. That inverted arrow, with dependencies pointing _inward_
-toward policy, is the dependency rule of hexagonal architecture (ports and adapters): "port" is the
-interface the domain owns, "adapter" is the implementation infra provides. Hexagonal adds more than
-the arrow (an explicit application boundary, and adapters both for the callers that drive the
-application and for the systems it calls), but the arrow itself is DIP applied at the module
-boundary. Here is the same fact drawn as a directory, the repo's actual layout, DIP made physical:
+Follow the compile-time arrow: `infrastructure` imports `domain`, so the domain compiles alone, with
+no Stripe SDK and no AWS on its classpath. That inward arrow is the dependency rule of hexagonal
+architecture (ports and adapters): the domain owns the port, and infrastructure provides the
+adapter. Hexagonal adds more than the arrow, such as an explicit application boundary and adapters
+on both the driving and the driven side, but the arrow itself is DIP at the module boundary. Here it
+is as the repo's actual layout:
 
 ```text
 checkout/
@@ -448,41 +433,48 @@ checkout/
     Main.kt          # the composition root: wires everything; DIP with no framework
 ```
 
-One deliberate swap in the runnable repo: so `main` runs anywhere with zero credentials, the shipped
-adapters are an `InMemoryOrderRepository` and a no-network `StripeClient` stand-in rather than the
-real Dynamo and Stripe SDKs. The ports can't tell the difference, and that a database can become a
-map in one line of wiring is DIP's whole claim.
+Two honest caveats. First, so `main` runs anywhere with zero credentials, the adapters are an
+`InMemoryOrderRepository` and a no-network `StripeClient` stand-in, not the real Dynamo and Stripe
+SDKs. The ports can't tell the difference, and that a database can become a map in one line of
+wiring is DIP's whole claim.
 
-One simplification, too: in the repo, `domain` and `infrastructure` are packages in a single Gradle
-project, not separate modules, so the compiler alone wouldn't stop a domain file from importing an
-adapter. `ArchitectureTest` does: it fails if anything in `domain/` depends on code outside the
-domain, Kotlin, and the JDK's `java.time` and `java.util`. The JDK allowance is narrow on purpose,
-because `java.sql` and `java.net.http` ship with the JDK too, and they're infrastructure. In a
-production codebase, make them Gradle subprojects and the build enforces the arrow for you.
+Second, `domain` and `infrastructure` are packages in one Gradle project, so the compiler alone
+wouldn't stop a domain file from importing an adapter. `ArchitectureTest` does, with two checks:
+
+- **Imports.** A `domain/` file may import, or name in full, only the domain, Kotlin, and the JDK's
+  `java.time` and `java.util`. The JDK allowance is narrow on purpose: `java.sql` and
+  `java.net.http` ship with the JDK too, and they're infrastructure.
+- **Ambient reads.** `java.lang` needs no import, and allowing `java.time` for `Instant` also allows
+  `Instant.now()`, exactly the read the `Clock` port exists to replace. This check fails on the
+  system clock, `System`, `Runtime`, `Thread` or `ProcessBuilder` anywhere in domain code.
+
+Both are text scans: a tripwire, not a proof. In a production codebase, make them Gradle subprojects
+and the build enforces the arrow for you.
 
 **The gotcha: DI != DIP.** Dependency _injection_ is a mechanism: someone hands objects their
 collaborators. Dependency _inversion_ is a principle about who owns the abstraction, and you can
 have either without the other. `@Autowired StripePaymentGateway`, the concrete class, is DI with
-zero DIP: a framework injecting your coupling for you. Hand-wiring in `main` with no framework at
-all is DI in its purest form, and it's DIP too, because the domain owns the interfaces being wired.
-If your service depends on an interface its own module owns, you have DIP whether or not a container
-exists.
+zero DIP: a framework injecting your coupling for you. Hand-wiring in `main` is DI in its purest
+form, and DIP too, because the domain owns the interfaces being wired. Depend on an interface your
+own module owns and you have DIP, container or not.
 
 **The payoff.** Testability, with cause and effect in the right order. You can hand
 `CheckoutService` a fake gateway and an in-memory `OrderRepository` _because_ it depends on
-abstractions the domain owns. The mock isn't the point; the mock is the _evidence_. And if you can't
-test a class without booting the database, that's DIP telling you an arrow points the wrong way.
+abstractions the domain owns. The mock isn't the point; it's the _evidence_. If you can't test a
+class without booting the database, DIP is telling you an arrow points the wrong way.
 
 **The trade-off.** The degenerate form is **interface-for-everything**:
-`FooService`/`FooServiceImpl` pairs that exist because "we always do it that way," the premature
-abstraction OCP warned about, moved up a layer. Abstract at **true frontiers**: I/O boundaries like
-the database, HTTP, queues, the clock and someone else's SDK, where a second implementation
-genuinely exists (the real one and the test fake, at minimum). Every port in this domain sits on
-exactly that kind of frontier. That includes `Clock`, which shares a name with `java.time.Clock` but
-not its width: the JDK class is abstract, carries a time zone the domain never reads, and no lambda
-can implement it. The domain asks for `now()` and nothing else, so that's the port it owns. An
-interface between two classes in the same package that always change together isn't low coupling;
-it's low cohesion disguised as low coupling.
+`FooService`/`FooServiceImpl` pairs that exist because "we always do it that way," OCP's premature
+abstraction moved up a layer. Abstract at **true frontiers**, the I/O boundaries (the database,
+HTTP, queues, the clock, someone else's SDK) where a second implementation genuinely exists: the
+real one and the test fake, at minimum. An interface between two classes in the same package that
+always change together isn't low coupling; it's low cohesion disguised as low coupling.
+
+Every port here sits on such a frontier, `Clock` included. It's deliberately narrower than
+`java.time.Clock`, which is abstract, carries a time zone the domain never reads, and no lambda can
+implement. The JDK's `java.time.InstantSource` (Java 17) has the right shape (one method, no zone,
+lambda-friendly) and would do; the domain declares its own anyway, like every other port, so the
+policy states its need in its own words. Three lines is the whole price.
 
 > If you remember one thing: DIP is the **coupling** principle at architecture scale. The domain
 > owns the interface, details implement it, arrows point inward. DI is a mechanism; DIP is a
@@ -492,21 +484,25 @@ it's low cohesion disguised as low coupling.
 
 ## The Composition Root
 
-Every abstraction in this system has to become an object eventually, and there is exactly one place
-where that's allowed to happen. Here it is: `Main.kt`, the file where all five principles stop being
-prose.
+Every abstraction has to become an object somewhere, and in this system exactly one place gets to do
+it: `Main.kt`, the file where all five principles stop being prose.
 
 ```kotlin
 // app/Main.kt
 fun main() {
     val meter = Meter()
+    val clock = Clock { Instant.now() }   // the domain's own port; java.time.Clock never leaks inward
+
+    // ISP: one Stripe adapter, two roles. The money-moving role gets the decorator stack below;
+    // the read-only role gets the adapter itself, since a statement needs no retries and no keys.
+    val stripe = StripePaymentGateway(StripeClient(clock))
 
     // Composition: cross-cutting concerns as a decorator stack. The ORDER is a
     // decision, and it lives here, in wiring, not in a class hierarchy.
     val gateway: PaymentGateway =
         MeteredGateway(
             RetryingGateway(
-                IdempotentGateway(StripePaymentGateway(StripeClient()), KeyStore()),
+                IdempotentGateway(stripe, KeyStore()),
             ),
             meter,
         )
@@ -516,7 +512,7 @@ fun main() {
         "card" to { CardPayment(gateway) },
         "paypal" to { PaypalPayment(gateway) },
         "bizum" to { BizumPayment(gateway) },
-        "giftcard" to { GiftCardPayment(gateway) },   // claims no refund contract
+        "giftcard" to { GiftCardPayment(gateway) },   // claims no refund capability
     )
 
     // DIP: details handed to a domain that has never heard of them.
@@ -525,61 +521,77 @@ fun main() {
         PriceCalculator(),                   // SRP: Finance's class, alone
         methods,
         orders,
-        Clock { Instant.now() },             // the domain's own port; java.time.Clock never leaks inward
+        clock,                               // the same clock the PSP stand-in stamps with
     )
 
-    // …then Main.kt builds a Cart, runs checkout.checkout(cart), and prints the sealed
-    // result, plus the saved order's receipt: ReceiptFormatter getting its turn.
+    // The clients, each holding only the role it plays.
+    val statements = StatementsScreen(stripe)                     // ISP: reads, can't move money
+    val refundDesk = RefundHandler(RefundFlow(orders, methods))   // LSP: refunds only through the gate
+    val storeCredit = SupportCreditFlow(StoreCredit())            // where a gift card's refund lands
+
+    // …then a short demo script plays a customer and the support desk: a card order and a
+    // gift-card order, the statement, both refunds, and the card's refund button pressed twice.
+    demo(checkout, orders, statements, refundDesk, storeCredit)
+    println("logical charges metered: ${meter.count("charges")}")
 }
 ```
 
 Read it as a checklist:
 
-- **Composition.** The gateway is wrapped three times: `IdempotentGateway` so an order already
-  approved isn't charged again, `RetryingGateway` so a call that timed out gets another try, and
-  `MeteredGateway` so someone can count what happened. Each wrapper holds the _port_ rather than a
-  concrete class, which is why they stack at all.
-- **Order.** Where each wrapper sits is a real decision, made here in wiring.
-  `MeteredGateway(RetryingGateway(…))` counts _logical_ charges, one however many retries it takes,
-  while `RetryingGateway(MeteredGateway(…))` counts _attempts_, every retry included. Neither order
-  is wrong; they're different metrics, and swapping them is a one-line diff in a code review rather
-  than a new class.
-- **OCP.** The registry is the dispatch point, concentrated into the one place with no logic to
-  break: the line the OCP section promised you.
-- **ISP and LSP.** Every detail reaches the domain typed as a _port_ (`PaymentGateway`, not
-  `StripePaymentGateway`), so role views and substitutability are what the rest of the system sees.
-- **DIP.** The domain classes take their details from outside, with no framework in sight: DI in its
-  purest form.
-- **SRP.** Nothing in this function contains business logic, because its single reason to change is
-  "the wiring changed." SRP, applied to `main` itself.
+- **Composition.** The gateway is wrapped three times: `IdempotentGateway` so an approved order
+  isn't charged again, `RetryingGateway` so a timed-out call gets another try, and `MeteredGateway`
+  so someone can count what happened. Each wrapper holds the _port_, not a concrete class, which is
+  why they stack at all.
+- **Order.** Where each wrapper sits is a decision made here. `MeteredGateway(RetryingGateway(…))`
+  counts _logical_ charges; `RetryingGateway(MeteredGateway(…))` counts _attempts_. Neither is
+  wrong; they're different metrics, a one-line diff apart. Neither counts PSP calls, though: in
+  both, idempotency sits inside the meter, so a double-click the cache answers still gets metered.
+  To count PSP calls, wrap the Stripe adapter itself.
+- **OCP.** The registry: the one registration line the OCP section promised you.
+- **ISP.** One Stripe adapter, two roles: `CardPayment` sees a decorated `PaymentGateway`,
+  `StatementsScreen` an undecorated `PaymentReader`, since a statement needs no retries or keys.
+  Cross-cutting concerns attach per role.
+- **LSP.** Details arrive typed as ports (`PaymentGateway`, not `StripePaymentGateway`), and refunds
+  reach money only through `RefundFlow`, which asks each method for the capability.
+- **DIP.** No framework in sight: DI in its purest form, down to one clock shared by the domain and
+  the PSP stand-in.
+- **SRP.** `main` holds no business logic, so its single reason to change is "the wiring changed."
+  The demo script lives in a function of its own.
 
-Neither nesting counts PSP calls, though. The idempotency layer sits inside the meter in both, so
-the meter counts a double-click that the idempotency cache answers, though it never reaches the PSP.
-To count real PSP calls, wrap the Stripe adapter itself.
+The decorators forward with Kotlin's `by inner`: delegate the whole port to the wrapped object, then
+override only what you care about. That's black-box reuse with no fragile base class, at one cost:
+`by` forwards whatever it isn't told about. `refund` already passes through all three layers
+unmetered, unretried and without a key, and a method added to `PaymentGateway` tomorrow would slip
+through the same way, silently. It's the open default, the opposite of a sealed `when` that makes
+you decide.
 
-The decorators get their forwarding from Kotlin's `by inner`: implement the port by delegating
-everything to the wrapped object, then override only what you care about. That's black-box reuse
-with no fragile base class, and it has one cost worth knowing: `by` forwards whatever it isn't told
-about. `refund` already passes through all three layers unmetered, unretried and without a key, and
-a method added to `PaymentGateway` tomorrow would slip through the same way, silently. It's the open
-default, the opposite of a sealed `when` that makes you decide.
+**What the idempotency layer can't do.** It's a local memory of approvals for calls made one at a
+time. If the PSP approves but its response never arrives, or two calls race past the cache, only the
+key sent to the PSP protects you, which is why the Stripe adapter forwards it. Both layers also
+check what a key is reused _for_:
 
-Know the limits of the idempotency layer, too. It's a local memory of approvals for calls made one
-at a time: if the PSP approves a charge but the response is lost, or two calls race past the cache
-together, it can't help. The guarantee that survives those cases is the same key sent to the PSP,
-which is why the Stripe adapter forwards it. Both layers also check what a caller reuses a key
-_for_. A replay of the same request gets the original answer, but both layers refuse the same order
-at a different amount or with a different method, the way
-[Stripe refuses a key reused with different parameters](https://docs.stripe.com/api/idempotent_requests).
-Without that check, a cart edited after payment would come back "approved" at a total nobody
-charged. Keying the order has a price as well: a real PSP replays the _first_ answer for a key, a
-decline included, so paying another way after a decline needs a new key (the order plus an attempt
-number), which the sample leaves out.
+- **Same request:** the original answer.
+- **Same order, another amount or method:** `Conflict`, the way
+  [Stripe refuses a key reused with different parameters](https://docs.stripe.com/api/idempotent_requests).
+  Otherwise a cart edited after payment would come back "approved" at a total nobody charged.
+- **Why not `Declined`:** a decline means no money moved, and here some may have. If the PSP charged
+  the first attempt but its response never arrived, a charge exists that no order records, and
+  "declined" would tell a customer who paid to pay again. Finding that charge by its key is
+  reconciliation, out of scope here.
+- **Same price, other lines:** the PSP only sees amount and method, so swapping size M for L replays
+  cleanly through both layers. Only the domain knows the lines, so `CheckoutService` compares them
+  with the recorded order and answers `Conflict` too.
 
-The retry layer gets its limits from the sealed type. It retries only `Timeout` and hands back
-`Approved` and `Declined` as they are, through an exhaustive `when`: a decline is an answer, not a
-failure, and asking again only asks the same question. Add a fourth `PaymentResult` and that `when`
-stops compiling until someone decides whether the new outcome is worth retrying.
+Keying the order has one more price: a real PSP replays the _first_ answer for a key, declines
+included, so paying another way after a decline needs a new key (order plus attempt number), which
+the sample leaves out.
+
+**What the retry layer won't do.** It retries only `Timeout`, through an exhaustive `when`: a
+decline is an answer, not a failure, and asking again only asks the same question. It also retries
+only a request that carries a key. A `Timeout` means nobody knows whether the PSP charged, so a
+keyed retry is safe (the PSP dedupes it) and a keyless one could charge twice. The wired flow always
+has a key, because an `OrderId` can't be blank. Add another `PaymentResult` and that `when` stops
+compiling until someone decides whether the new outcome is worth retrying.
 
 ---
 
@@ -598,27 +610,27 @@ The two feed each other: group what changes together and fewer changes cross a m
 coupling falls; cut a dependency and each side comes out more focused, so cohesion rises.
 
 One bounded context was enough for all five letters, because the domain forced each one: pricing and
-receipt copy answer to different departments, new payment methods arrive constantly, gift cards
-can't refund, a statements screen has no business moving money, and checkout has to be testable
-without a PSP. Here is every dial in one place:
+receipt copy answer to different departments, new payment methods keep arriving, gift cards can't
+refund, a statements screen has no business moving money, and checkout has to be testable without a
+PSP. Here is every dial in one place:
 
 | Principle | Under-applied                           | Over-applied                | The dial                                    |
 | --------- | --------------------------------------- | --------------------------- | ------------------------------------------- |
 | SRP       | God class                               | Shotgun surgery             | One actor per class                         |
 | OCP       | Growing `if/else`                       | Speculative interfaces      | Wait for the second case; seal what you own |
 | LSP       | _Broken:_ `is`-check patches in callers | — (constraint, not a dial)  | Can't keep the contract → don't inherit     |
-| ISP       | Fat interface                           | Interface explosion         | One role per client                         |
+| ISP       | Fat interface                           | Interface explosion         | One interface per role                      |
 | DIP       | Domain imports infrastructure           | `FooServiceImpl` everywhere | Abstract at true frontiers only             |
 
-The LSP row reads differently on purpose: a constraint isn't under-applied, it's _broken_. The
-`is`-check patches are the symptom you see in callers, not a sign you used too little LSP.
+The LSP row reads differently on purpose: a constraint isn't under-applied, it's _broken_, and the
+`is`-check patches are the symptom you see in callers.
 
-Cohesion and coupling are not SOLID's children; they're its grandparents. Stevens, Myers, and
+Cohesion and coupling aren't SOLID's children; they're its grandparents. Stevens, Myers, and
 Constantine named the pair in "Structured Design" (_IBM Systems Journal_, 1974); Parnas nailed the
 underlying idea as _information hiding_ in 1972; the acronym arrived three decades later. The
 letters are the most successful marketing campaign those two ideas ever had, though LSP also carries
-a correctness rule that neither force gives you on its own. Genuinely useful as mnemonics, dangerous
-as a checklist. A checklist tells you to add an interface. The forces tell you whether the interface
+a correctness rule that neither force gives you on its own. Useful as mnemonics, dangerous as a
+checklist: a checklist tells you to add an interface, and the forces tell you whether the interface
 bought you anything.
 
 ---

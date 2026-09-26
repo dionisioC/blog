@@ -6,6 +6,7 @@ import dev.dionisioc.checkout.domain.Cart
 import dev.dionisioc.checkout.domain.ChargeRequest
 import dev.dionisioc.checkout.domain.CheckoutService
 import dev.dionisioc.checkout.domain.Clock
+import dev.dionisioc.checkout.domain.Conflict
 import dev.dionisioc.checkout.domain.Declined
 import dev.dionisioc.checkout.domain.Line
 import dev.dionisioc.checkout.domain.Money
@@ -29,6 +30,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class CompositionTest {
@@ -105,8 +107,8 @@ class CompositionTest {
         val gateway = IdempotentGateway(counting, KeyStore())
 
         gateway.charge(req)
-        assertTrue(gateway.charge(req.copy(amount = Money(900))) is Declined)
-        assertTrue(gateway.charge(req.copy(method = "paypal")) is Declined)
+        assertTrue(gateway.charge(req.copy(amount = Money(900))) is Conflict)
+        assertTrue(gateway.charge(req.copy(method = "paypal")) is Conflict)
         assertEquals(1, counting.calls)               // neither reached the PSP
     }
 
@@ -144,10 +146,27 @@ class CompositionTest {
         val edited = listOf(book, Line("gift wrap", Money(500), giftWrap = true))
 
         assertTrue(checkout.checkout(Cart(OrderId("order-1"), listOf(book), "card")) is Approved)
-        assertTrue(checkout.checkout(Cart(OrderId("order-1"), edited, "card")) is Declined)
+        assertTrue(checkout.checkout(Cart(OrderId("order-1"), edited, "card")) is Conflict)
 
         assertEquals(1, psp.list().size)
         assertEquals(psp.list().single().amount, orders.find(OrderId("order-1"))?.total)
+    }
+
+    // A same-price edit (size M swapped for L) replays at both layers: the PSP compares amount and
+    // method, never lines. Only the domain knows the cart, so checkout compares it with the order.
+    @Test
+    fun `a same-price edit after payment is a conflict, and the order keeps its lines`() {
+        val psp = StripeClient()
+        val orders = InMemoryOrderRepository()
+        val checkout = wiredCheckout(psp, orders, Clock { Instant.EPOCH })
+        val sizeM = Line("t-shirt M", Money(2_000))
+        val sizeL = Line("t-shirt L", Money(2_000))
+
+        assertTrue(checkout.checkout(Cart(OrderId("order-1"), listOf(sizeM), "card")) is Approved)
+        assertTrue(checkout.checkout(Cart(OrderId("order-1"), listOf(sizeL), "card")) is Conflict)
+
+        assertEquals(1, psp.list().size)
+        assertEquals(listOf(sizeM), orders.find(OrderId("order-1"))?.lines)
     }
 
     @Test
@@ -174,6 +193,24 @@ class CompositionTest {
         gateway.charge(noKey)
         gateway.charge(noKey)
         assertEquals(2, counting.calls)               // two unrelated charges, two PSP calls
+    }
+
+    // A Timeout doesn't say the PSP never charged. With a key the PSP dedupes the retry; without
+    // one, a retry would be a second charge, so a keyless request gets exactly one attempt.
+    @Test
+    fun `a request with no key is never retried`() {
+        val flaky = FlakyGateway(failuresBeforeSuccess = 1)
+        val gateway = RetryingGateway(flaky)
+
+        assertTrue(gateway.charge(ChargeRequest(Money(500), "card")) is Timeout)
+        assertEquals(1, flaky.attempts)
+    }
+
+    // The order id is the key, so a blank one would opt a real checkout out of every guard above.
+    @Test
+    fun `an order id can't be blank, so the wired flow always sends a key`() {
+        assertFailsWith<IllegalArgumentException> { OrderId("") }
+        assertFailsWith<IllegalArgumentException> { OrderId(" ") }
     }
 
     // Metered charges are not PSP calls: with the idempotency layer inside the meter — as in
@@ -212,8 +249,27 @@ class CompositionTest {
         StripePaymentGateway(psp).charge(req)
         val gateway = IdempotentGateway(StripePaymentGateway(psp), KeyStore())
 
-        assertTrue(gateway.charge(req.copy(amount = Money(900))) is Declined)
+        assertTrue(gateway.charge(req.copy(amount = Money(900))) is Conflict)
         assertEquals(1, psp.list().size)
+    }
+
+    // Why a conflict isn't a decline, end to end: the first checkout reached the PSP and its
+    // response was lost, then the customer edited the cart. The PSP holds a charge no order records,
+    // so "declined" would tell a customer who paid to pay again. Finding that charge by its key is
+    // reconciliation, which this sample leaves out.
+    @Test
+    fun `an edited cart after a lost response is a conflict, not a decline`() {
+        val psp = StripeClient()
+        val orders = InMemoryOrderRepository()
+        val checkout = wiredCheckout(psp, orders, Clock { Instant.EPOCH })
+        // The first cart: a €20.00 book, €18.00 after Finance's discount.
+        StripePaymentGateway(psp).charge(ChargeRequest(Money(1_800), "card", idempotencyKey = "order-1"))
+
+        val edited = listOf(Line("book", Money(2_000)), Line("pen", Money(300)))
+        assertTrue(checkout.checkout(Cart(OrderId("order-1"), edited, "card")) is Conflict)
+
+        assertEquals(1, psp.list().size)              // the customer paid once...
+        assertNull(orders.find(OrderId("order-1")))   // ...and no order says so yet
     }
 
     private fun wiredCheckout(psp: StripeClient, orders: OrderRepository, clock: Clock): CheckoutService {

@@ -3,8 +3,8 @@ package dev.dionisioc.checkout.infrastructure
 import dev.dionisioc.checkout.domain.Approved
 import dev.dionisioc.checkout.domain.ChargeRequest
 import dev.dionisioc.checkout.domain.Clock
+import dev.dionisioc.checkout.domain.Conflict
 import dev.dionisioc.checkout.domain.DateRange
-import dev.dionisioc.checkout.domain.Declined
 import dev.dionisioc.checkout.domain.Money
 import dev.dionisioc.checkout.domain.PaymentGateway
 import dev.dionisioc.checkout.domain.PaymentReader
@@ -69,7 +69,8 @@ class StripePaymentGateway(private val client: StripeClient) : PaymentGateway, P
             Approved(txn, req.amount)
         } catch (e: IdempotencyKeyReusedException) {
             // The vendor's exception stops here: the domain only ever sees its own sealed result.
-            Declined("idempotency key reused with different parameters: ${e.key}")
+            // A Conflict, not a Declined: the key's first request may already have been charged.
+            Conflict("idempotency key reused with different parameters: ${e.key}")
         }
 
     override fun refund(txn: TxnId) = client.refund(txn)

@@ -14,10 +14,21 @@ package dev.dionisioc.checkout.domain
  */
 interface PaymentMethod {
     fun charge(order: OrderId, amount: Money): PaymentResult
+
+    /**
+     * The refund capability, asked of the object instead of read off its type. The base promises
+     * only an answer, and `null` keeps that promise: a method has to claim the capability to have
+     * it. It survives decoration, too: a wrapper written as `PaymentMethod by inner` forwards the
+     * question to the method it wraps, where an `as? RefundableMethod` would stop at the wrapper and
+     * quietly turn a card's refund into store credit.
+     */
+    fun refundable(): RefundableMethod? = null
 }
 
 interface RefundableMethod : PaymentMethod {
     fun refund(txn: TxnId)
+
+    override fun refundable(): RefundableMethod = this
 }
 
 /**
@@ -67,11 +78,20 @@ data class Refunded(val txn: TxnId) : RefundResult
 /** The method that took [amount] can't take it back — SupportCreditFlow settles it as store credit. */
 data class NotRefundable(val amount: Money) : RefundResult
 
+/** The order was settled already, as [settlement]: pressing the button again moves no money. */
+data class AlreadySettled(val settlement: RefundResult) : RefundResult
+
 /**
  * The segregation made load-bearing. Refunds enter the domain here, by *order*, never by a bare
  * transaction id: the order recorded which method took the money and which transaction to reverse,
  * so no caller can pair a card's refund with a gift card's charge. This decides a refund is
  * allowed; the gateway port behind the method carries the money movement out.
+ *
+ * It also decides only once. The order keeps its settlement, so a second press of the refund
+ * button comes back AlreadySettled: no second refund, and no second NotRefundable to issue store
+ * credit twice. The money moves before the order is saved: a crash in between errs toward asking
+ * the PSP twice, which it can refuse, never toward an order that says "refunded" over money that
+ * never went back.
  */
 class RefundFlow(
     private val orders: OrderRepository,
@@ -79,9 +99,18 @@ class RefundFlow(
 ) {
     fun refund(id: OrderId): RefundResult {
         val order = requireNotNull(orders.find(id)) { "unknown order: ${id.value}" }
-        val method = methods.refundable(order.method) ?: return NotRefundable(order.total)
-        method.refund(order.txn)
-        return Refunded(order.txn)
+        val settled = order.settlement
+        if (settled != null) return AlreadySettled(settled)
+
+        val method = methods.refundable(order.method)
+        val settlement = if (method == null) {
+            NotRefundable(order.total)
+        } else {
+            method.refund(order.txn)
+            Refunded(order.txn)
+        }
+        orders.save(order.copy(settlement = settlement))
+        return settlement
     }
 }
 
@@ -103,8 +132,9 @@ class PaymentMethodRegistry(vararg entries: Pair<String, () -> PaymentMethod>) {
 
     /**
      * The one runtime question left, because methods arrive by name: does this one have the refund
-     * capability? It asks about the *contract*, never a concrete class, so a new refundable method
-     * still needs no edit here — the difference from an `is GiftCardPayment` patch.
+     * capability? It asks the method about the *contract*, never tests for a concrete class, so a
+     * new refundable method still needs no edit here — the difference from an `is GiftCardPayment`
+     * patch.
      */
-    fun refundable(method: String): RefundableMethod? = resolve(method) as? RefundableMethod
+    fun refundable(method: String): RefundableMethod? = resolve(method).refundable()
 }

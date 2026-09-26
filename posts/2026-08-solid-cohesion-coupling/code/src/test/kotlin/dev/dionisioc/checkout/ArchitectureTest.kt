@@ -40,4 +40,33 @@ class ArchitectureTest {
 
         assertEquals(emptyList(), offenders)
     }
+
+    // The import check above can't see two things. java.lang needs no import, and allowing
+    // java.time for its types also allows `Instant.now()`, the very read the Clock port exists to
+    // replace. So this one names the ambient reads outright: the system clock however it's spelled,
+    // and System, Runtime, Thread and ProcessBuilder. Comments are skipped, since the domain's docs
+    // may name what it avoids. Still a text scan: a tripwire, not a proof.
+    @Test
+    fun `the domain never reads the clock, the environment or the process directly`() {
+        val files = File("src/main/kotlin/dev/dionisioc/checkout/domain")
+            .walk()
+            .filter { it.extension == "kt" }
+            .toList()
+        assertTrue(files.isNotEmpty(), "no domain sources found — is the working directory the project?")
+
+        val ambientReads = listOf(
+            Regex("""\b(?:Instant|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime)\.now\("""),
+            Regex("""\b(?:Clock|InstantSource)\.(?:system|tick)\w*\("""),
+            Regex("""\b(?:System|Runtime|Thread|ProcessBuilder)\b"""),
+        )
+        val offenders = files.flatMap { file ->
+            file.readLines()
+                .map { it.substringBefore("//") }
+                .filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("/*") }
+                .filter { line -> ambientReads.any { it.containsMatchIn(line) } }
+                .map { "${file.name}: ${it.trim()}" }
+        }
+
+        assertEquals(emptyList(), offenders)
+    }
 }

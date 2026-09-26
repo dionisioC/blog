@@ -4,7 +4,8 @@ class InsufficientCreditException : RuntimeException()
 
 /**
  * LSP, the invariant form — and a working part of the system, not an exhibit: this is where a
- * gift-card refund lands, because GiftCardPayment can never be handed to RefundFlow.
+ * gift-card refund lands, because GiftCardPayment claims no refund capability and RefundFlow
+ * answers its orders NotRefundable.
  *
  * Invariant: `balance()` is never negative, after any sequence of calls. Every caller may assume
  * it without checking — reconciliation, the balance the app displays, the liability line Finance
@@ -33,12 +34,12 @@ open class StoreCredit {
 }
 
 /**
- * The support path the segregation forces into existence. RefundFlow takes a RefundableMethod, so
- * a gift-card refund fails to compile and the money cannot go back the way it came — it comes
- * back as store credit instead.
+ * The support path the segregation forces into existence. A gift card claims no refund
+ * capability, so RefundFlow answers its orders NotRefundable: the money cannot go back the way it
+ * came, and it comes back as store credit instead.
  *
- * Note what is *not* here: no `if (method is GiftCardPayment)`. Which flow the caller can reach
- * is decided by the types it holds, never by a branch inside one.
+ * Note what is *not* here: no `if (method is GiftCardPayment)`. RefundFlow asks each method for a
+ * capability, never tests for a class, so this flow never learns which methods lack one.
  */
 class SupportCreditFlow(private val credit: StoreCredit) {
     /** Issues [amount] as store credit and returns the customer's new balance. */
