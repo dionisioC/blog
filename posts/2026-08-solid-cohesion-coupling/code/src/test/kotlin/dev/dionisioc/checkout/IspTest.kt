@@ -1,13 +1,13 @@
 package dev.dionisioc.checkout
 
-import dev.dionisioc.checkout.clients.RefundHandler
 import dev.dionisioc.checkout.clients.StatementsScreen
 import dev.dionisioc.checkout.domain.Approved
+import dev.dionisioc.checkout.domain.CardPayment
 import dev.dionisioc.checkout.domain.ChargeRequest
 import dev.dionisioc.checkout.domain.Clock
 import dev.dionisioc.checkout.domain.DateRange
 import dev.dionisioc.checkout.domain.Money
-import dev.dionisioc.checkout.domain.TxnId
+import dev.dionisioc.checkout.domain.OrderId
 import dev.dionisioc.checkout.infrastructure.StripeClient
 import dev.dionisioc.checkout.infrastructure.StripePaymentGateway
 import java.time.Instant
@@ -25,16 +25,15 @@ class IspTest {
     fun `one adapter, two role-views of the same object`() {
         val stripe = StripePaymentGateway(StripeClient(Clock { start }))
         val screen = StatementsScreen(stripe)     // sees only PaymentReader — cannot move money
-        val refunds = RefundHandler(stripe)       // sees only PaymentGateway — can move money
+        val card = CardPayment(stripe)            // sees only PaymentGateway — cannot read statements
         val today = DateRange(start, days(1))
 
         assertEquals(0, screen.transactionCount(today))
 
-        val result = stripe.charge(ChargeRequest(Money(500), "card"))
+        val approved = card.charge(OrderId("o1"), Money(500)) as Approved
         assertEquals(1, screen.transactionCount(today))    // the reader view sees the write
 
-        val txn = TxnId((result as Approved).receipt.orderRef)
-        refunds.refund(txn)                                // the gateway view reverses it
+        card.refund(approved.txn)                          // the gateway view reverses it
         assertEquals(0, screen.transactionCount(today))    // same underlying object
     }
 

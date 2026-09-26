@@ -32,9 +32,21 @@ data class Line(val name: String, val price: Money, val giftWrap: Boolean = fals
 
 data class Cart(val id: OrderId, val items: List<Line>, val paymentMethod: String)
 
-data class Order(val id: OrderId, val total: Money, val placedAt: Instant)
+/**
+ * What an approved checkout leaves behind. It records how it was paid — the method and the PSP
+ * transaction — because a refund starts from the order, never from a bare transaction id.
+ */
+data class Order(
+    val id: OrderId,
+    val total: Money,
+    val placedAt: Instant,
+    val txn: TxnId,
+    val method: String,
+    val lines: List<Line>,
+)
 
-data class Receipt(val orderRef: String, val total: Money)
+/** The customer's receipt — Marketing's output, built by ReceiptFormatter. */
+data class Receipt(val order: OrderId, val total: Money, val pointsEarnedOn: List<Line>)
 
 data class ChargeRequest(val amount: Money, val method: String, val idempotencyKey: String = "")
 

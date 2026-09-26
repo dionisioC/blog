@@ -7,13 +7,14 @@ package dev.dionisioc.checkout.domain
  */
 sealed interface PaymentResult
 
-data class Approved(val receipt: Receipt) : PaymentResult
+/** The PSP took [amount] under [txn] — the transaction a refund will later reverse. */
+data class Approved(val txn: TxnId, val amount: Money) : PaymentResult
 data class Declined(val reason: String) : PaymentResult
 data object Timeout : PaymentResult
 
 /** Exhaustive `when`, no `else` — adding a variant above breaks this at compile time. */
 fun record(result: PaymentResult): String = when (result) {
-    is Approved -> "approved:${result.receipt.orderRef}"
+    is Approved -> "approved:${result.txn.value}"
     is Declined -> "declined:${result.reason}"
     Timeout -> "timeout"
 }

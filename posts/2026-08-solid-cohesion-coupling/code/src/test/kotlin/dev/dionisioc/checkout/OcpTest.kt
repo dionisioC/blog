@@ -25,8 +25,20 @@ class OcpTest {
 
     @Test
     fun `unknown method fails fast`() {
-        // IllegalArgumentException, not IllegalState: the registry is fine, the argument isn't —
-        // so callers can tell bad cart data from a misconfigured composition root.
+        // IllegalArgumentException: the name isn't registered. The registry can't tell a typo in
+        // cart data from a method the composition root forgot to register — to it, both are an
+        // unknown name.
         assertFailsWith<IllegalArgumentException> { registry.resolve("crypto") }
+    }
+
+    // One line per method cuts both ways: a second "card" line would silently replace the first.
+    @Test
+    fun `registering a name twice fails at wiring time`() {
+        assertFailsWith<IllegalArgumentException> {
+            PaymentMethodRegistry(
+                "card" to { CardPayment(gateway) },
+                "card" to { BizumPayment(gateway) },
+            )
+        }
     }
 }

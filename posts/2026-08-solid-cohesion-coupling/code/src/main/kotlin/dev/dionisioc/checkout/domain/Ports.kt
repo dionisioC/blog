@@ -23,7 +23,11 @@ interface OrderRepository {
     fun save(order: Order)
 }
 
-/** A `fun interface` so the composition root can satisfy it with `Clock { Instant.now() }`. */
+/**
+ * A `fun interface` so the composition root can satisfy it with `Clock { Instant.now() }`. Same
+ * name as the JDK's clock, not the same width: that one is an abstract class carrying a time zone
+ * the domain never reads. The domain asks for `now()` and nothing else, so that's all it owns.
+ */
 fun interface Clock {
     fun now(): Instant
 }

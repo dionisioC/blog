@@ -14,7 +14,6 @@ import dev.dionisioc.checkout.domain.PaymentGateway
 import dev.dionisioc.checkout.domain.PaymentMethodRegistry
 import dev.dionisioc.checkout.domain.PaymentResult
 import dev.dionisioc.checkout.domain.PriceCalculator
-import dev.dionisioc.checkout.domain.Receipt
 import dev.dionisioc.checkout.domain.TxnId
 import dev.dionisioc.checkout.infrastructure.InMemoryOrderRepository
 import java.time.Instant
@@ -44,7 +43,7 @@ class DipTest {
     fun `checkout runs against fakes, with no database`() {
         val repo = InMemoryOrderRepository()
         val at = Instant.parse("2026-07-04T00:00:00Z")
-        val service = serviceWith(Approved(Receipt("fake", Money(2_000))), repo, at)
+        val service = serviceWith(Approved(TxnId("fake"), Money(2_000)), repo, at)
 
         val result = service.checkout(cart)
 
