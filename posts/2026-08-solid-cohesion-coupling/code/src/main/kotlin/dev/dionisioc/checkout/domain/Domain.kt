@@ -22,8 +22,16 @@ value class Money(val cents: Long) : Comparable<Money> {
 
 fun Iterable<Line>.sum(): Money = fold(Money(0)) { total, line -> total + line.price }
 
+/**
+ * Also the idempotency key of the order's charge, so it can never be blank: a blank key opts out
+ * of deduplication at every layer, and a double-click would be charged twice.
+ */
 @JvmInline
-value class OrderId(val value: String)
+value class OrderId(val value: String) {
+    init {
+        require(value.isNotBlank()) { "order id must not be blank" }
+    }
+}
 
 @JvmInline
 value class TxnId(val value: String)
@@ -34,7 +42,8 @@ data class Cart(val id: OrderId, val items: List<Line>, val paymentMethod: Strin
 
 /**
  * What an approved checkout leaves behind. It records how it was paid — the method and the PSP
- * transaction — because a refund starts from the order, never from a bare transaction id.
+ * transaction — because a refund starts from the order, never from a bare transaction id. After a
+ * refund it records the [settlement] as well, so the same money can't go back twice.
  */
 data class Order(
     val id: OrderId,
@@ -43,11 +52,17 @@ data class Order(
     val txn: TxnId,
     val method: String,
     val lines: List<Line>,
+    val settlement: RefundResult? = null,
 )
 
 /** The customer's receipt — Marketing's output, built by ReceiptFormatter. */
 data class Receipt(val order: OrderId, val total: Money, val pointsEarnedOn: List<Line>)
 
+/**
+ * [idempotencyKey] names the operation this charge belongs to. Blank means "no idempotency claim":
+ * never deduped, and never retried either, because after a Timeout only the key makes a second
+ * attempt safe.
+ */
 data class ChargeRequest(val amount: Money, val method: String, val idempotencyKey: String = "")
 
 data class Txn(val id: TxnId, val amount: Money, val at: Instant)

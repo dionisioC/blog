@@ -1,6 +1,7 @@
 package dev.dionisioc.checkout
 
 import dev.dionisioc.checkout.clients.RefundHandler
+import dev.dionisioc.checkout.domain.AlreadySettled
 import dev.dionisioc.checkout.domain.Approved
 import dev.dionisioc.checkout.domain.CardPayment
 import dev.dionisioc.checkout.domain.Cart
@@ -12,6 +13,7 @@ import dev.dionisioc.checkout.domain.Line
 import dev.dionisioc.checkout.domain.Money
 import dev.dionisioc.checkout.domain.NotRefundable
 import dev.dionisioc.checkout.domain.OrderId
+import dev.dionisioc.checkout.domain.PaymentGateway
 import dev.dionisioc.checkout.domain.PaymentMethod
 import dev.dionisioc.checkout.domain.PaymentMethodRegistry
 import dev.dionisioc.checkout.domain.PriceCalculator
@@ -20,6 +22,7 @@ import dev.dionisioc.checkout.domain.RefundableMethod
 import dev.dionisioc.checkout.domain.Refunded
 import dev.dionisioc.checkout.domain.StoreCredit
 import dev.dionisioc.checkout.domain.SupportCreditFlow
+import dev.dionisioc.checkout.domain.TxnId
 import dev.dionisioc.checkout.infrastructure.InMemoryOrderRepository
 import dev.dionisioc.checkout.infrastructure.StripeClient
 import dev.dionisioc.checkout.infrastructure.StripePaymentGateway
@@ -116,6 +119,55 @@ class LspTest {
 
         assertIs<NotRefundable>(RefundHandler(shop.refunds).refund(OrderId("o3")))
         assertEquals(1, shop.psp.list().size)
+    }
+
+    // The capability is asked of the method, not read off its type, so it survives decoration: a
+    // delegating wrapper forwards the question. An `as? RefundableMethod` would stop at the wrapper,
+    // and every card order would quietly be settled in store credit instead of refunded.
+    @Test
+    fun `a wrapped method keeps its refund capability, and a wrapped gift card still has none`() {
+        class Audited(inner: PaymentMethod) : PaymentMethod by inner
+        val gateway = StripePaymentGateway(StripeClient())
+        val registry = PaymentMethodRegistry(
+            "card" to { Audited(CardPayment(gateway)) },
+            "giftcard" to { Audited(GiftCardPayment(gateway)) },
+        )
+
+        assertNotNull(registry.refundable("card"))
+        assertNull(registry.refundable("giftcard"))
+    }
+
+    // The button pressed twice: the order keeps its settlement, so the second press moves nothing.
+    @Test
+    fun `a second refund of the same order moves no money`() {
+        var refunds = 0
+        val stripe = StripePaymentGateway(StripeClient())
+        val counting = object : PaymentGateway by stripe {
+            override fun refund(txn: TxnId) {
+                refunds++
+                stripe.refund(txn)
+            }
+        }
+        val methods = PaymentMethodRegistry("card" to { CardPayment(counting) })
+        val orders = InMemoryOrderRepository()
+        CheckoutService(PriceCalculator(), methods, orders, Clock { Instant.EPOCH })
+            .checkout(Cart(OrderId("o4"), listOf(Line("book", Money(2_500))), "card"))
+        val flow = RefundFlow(orders, methods)
+
+        val first = assertIs<Refunded>(flow.refund(OrderId("o4")))
+        assertEquals(AlreadySettled(first), flow.refund(OrderId("o4")))
+        assertEquals(1, refunds)                     // the PSP was asked once
+    }
+
+    // The store-credit path settles once too: a second NotRefundable would tell the desk to issue
+    // the same credit twice.
+    @Test
+    fun `a gift-card order is settled as store credit only once`() {
+        val shop = Shop()
+        shop.pay(OrderId("o5"), "giftcard")
+
+        val first = assertIs<NotRefundable>(RefundHandler(shop.refunds).refund(OrderId("o5")))
+        assertEquals(AlreadySettled(first), RefundHandler(shop.refunds).refund(OrderId("o5")))
     }
 
     // The base keeps its own promise first. Without these guards a plain StoreCredit goes negative

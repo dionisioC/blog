@@ -2,6 +2,7 @@ package dev.dionisioc.checkout.infrastructure
 
 import dev.dionisioc.checkout.domain.Approved
 import dev.dionisioc.checkout.domain.ChargeRequest
+import dev.dionisioc.checkout.domain.Conflict
 import dev.dionisioc.checkout.domain.Declined
 import dev.dionisioc.checkout.domain.PaymentGateway
 import dev.dionisioc.checkout.domain.PaymentResult
@@ -30,6 +31,10 @@ class MeteredGateway(
 /**
  * Retries only what might succeed next time. A decline is an answer, not a failure — retrying it
  * just asks the same question again — so only a Timeout goes round again.
+ *
+ * And only with a key. A Timeout doesn't say the PSP never charged; it says nobody knows. A retry
+ * carrying the same key is safe because the PSP dedupes it, while a keyless retry would be a second
+ * charge, so a request with no idempotency claim gets exactly one attempt.
  */
 class RetryingGateway(
     private val inner: PaymentGateway,
@@ -40,6 +45,7 @@ class RetryingGateway(
     }
 
     override fun charge(req: ChargeRequest): PaymentResult {
+        if (req.idempotencyKey.isBlank()) return inner.charge(req)
         var result = inner.charge(req)
         var attempts = 1
         while (attempts < maxAttempts && isTransient(result)) {
@@ -49,9 +55,9 @@ class RetryingGateway(
         return result
     }
 
-    // Exhaustive, no `else`: a fourth PaymentResult has to decide here whether it's worth retrying.
+    // Exhaustive, no `else`: a new PaymentResult has to decide here whether it's worth retrying.
     private fun isTransient(result: PaymentResult): Boolean = when (result) {
-        is Approved, is Declined -> false
+        is Approved, is Declined, is Conflict -> false
         Timeout -> true
     }
 }
@@ -63,9 +69,10 @@ class RetryingGateway(
  * unrelated charges must never dedupe just because neither carried a key.
  *
  * A key is only answered for the request it was first used for. The same order at a different
- * amount, or with a different method, is refused rather than handed the old approval — otherwise a
- * cart edited after payment would come back "approved" at a total nobody charged. The real PSP
- * refuses a reused key the same way.
+ * amount, or with a different method, comes back as a Conflict rather than the old approval —
+ * otherwise a cart edited after payment would come back "approved" at a total nobody charged. Not
+ * as a Declined, either: the first request may well have been charged. The real PSP refuses a
+ * reused key the same way.
  *
  * Scope: a local memory of approvals, for calls made one at a time. A response lost after the PSP
  * approved, or two calls racing past `get` together, both reach the PSP again — which is why the
@@ -81,7 +88,7 @@ class IdempotentGateway(
             req.idempotencyKey.isBlank() -> inner.charge(req)
             stored == null -> chargeAndCache(req)
             stored.request == req -> stored.result
-            else -> Declined("idempotency key reused with different parameters: ${req.idempotencyKey}")
+            else -> Conflict("idempotency key reused with different parameters: ${req.idempotencyKey}")
         }
     }
 
